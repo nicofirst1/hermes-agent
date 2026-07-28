@@ -511,6 +511,16 @@ _RICH_PROTECTED_REGION_RE = re.compile(
     re.MULTILINE,
 )
 
+_CRON_ACTION_MARKER_RE = re.compile(
+    r"(?im)^\s*(?:<!--\s*telegram_actions\s*:\s*(?P<html_mode>[a-z0-9_-]+)\s*-->|\[\[telegram_actions:(?P<bracket_mode>[a-z0-9_-]+)\]\])\s*$"
+)
+_VISIBILITY_OPPORTUNITIES_SECTION_RE = re.compile(
+    r"(?im)^##\s+Draft-only opportunities\s*$"
+)
+_VISIBILITY_NEED_NICO_SECTION_RE = re.compile(r"(?im)^##\s+Need Nico\?\s*$")
+_VISIBILITY_NUMBERED_ITEM_RE = re.compile(r"(?m)^\s*(\d+)\.\s+")
+_VISIBILITY_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
+
 
 def _rich_normalize_linebreaks(text: str) -> str:
     """Convert single ``\\n`` to Markdown hard breaks for the rich-message path.
@@ -4302,6 +4312,157 @@ class TelegramAdapter(BasePlatformAdapter):
         else:  # "first" (default)
             return chunk_index == 0
 
+    @staticmethod
+    def _extract_cron_action_marker(content: str) -> tuple[Optional[str], str]:
+        """Strip a hidden cron action marker and return its mode.
+
+        Cron prompts can opt into Telegram inline buttons by ending the final
+        message with e.g. ``[[telegram_actions:visibility]]``.  The marker is
+        removed before delivery so users see clean Markdown, while the send path
+        can attach a small action keyboard.  The legacy HTML-comment marker is
+        still accepted for existing jobs.
+        """
+        match = _CRON_ACTION_MARKER_RE.search(content or "")
+        if not match:
+            return None, content
+        mode = (match.group("html_mode") or match.group("bracket_mode") or "").strip().lower()
+        cleaned = _CRON_ACTION_MARKER_RE.sub("", content).strip()
+        return mode, cleaned
+
+    @staticmethod
+    def _cron_action_keyboard(mode: Optional[str]):
+        """Build an inline keyboard for actionable cron reports."""
+        if mode != "visibility":
+            return None
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📝 Draft reply", callback_data="cr:draft"),
+                InlineKeyboardButton("🔎 Prioritize", callback_data="cr:prioritize"),
+            ],
+            [
+                InlineKeyboardButton("✅ Useful", callback_data="cr:useful"),
+                InlineKeyboardButton("✕ Dismiss", callback_data="cr:dismiss"),
+            ],
+        ])
+
+    @staticmethod
+    def _split_visibility_cron_report(content: str) -> list[str]:
+        """Split a visibility report into summary + one message per opportunity."""
+        section = _VISIBILITY_OPPORTUNITIES_SECTION_RE.search(content or "")
+        if not section:
+            return []
+
+        before = content[:section.start()].strip()
+        after = content[section.end():].strip()
+        need_match = _VISIBILITY_NEED_NICO_SECTION_RE.search(after)
+        if need_match:
+            opportunities_text = after[:need_match.start()].strip()
+            need_text = after[need_match.start():].strip()
+        else:
+            opportunities_text = after
+            need_text = ""
+
+        item_matches = list(_VISIBILITY_NUMBERED_ITEM_RE.finditer(opportunities_text))
+        if len(item_matches) < 2:
+            # Do not split a one-item report; the report-level buttons are clear enough.
+            return []
+
+        parts: list[str] = []
+        summary = before
+        if need_text:
+            summary = f"{summary}\n\n## Opportunities\n- Sent separately below, one message per opportunity.\n\n{need_text}"
+        else:
+            summary = f"{summary}\n\n## Opportunities\n- Sent separately below, one message per opportunity."
+        parts.append(summary.strip())
+
+        for idx, match in enumerate(item_matches):
+            start = match.start()
+            end = item_matches[idx + 1].start() if idx + 1 < len(item_matches) else len(opportunities_text)
+            item = opportunities_text[start:end].strip()
+            number = match.group(1)
+            parts.append(f"## Opportunity {number}\n\n{item}")
+
+        return [TelegramAdapter._plain_visibility_links(part) for part in parts if part.strip()]
+
+    @staticmethod
+    def _plain_visibility_links(content: str) -> str:
+        """Convert Markdown links to plain label: URL lines for Telegram reliability."""
+        return _VISIBILITY_MARKDOWN_LINK_RE.sub(r"\1: \2", content or "")
+
+    @staticmethod
+    def _visibility_html(content: str) -> str:
+        """Convert a small Markdown subset to Telegram HTML for cron cards."""
+        placeholders: dict[str, str] = {}
+
+        def _ph(value: str) -> str:
+            key = f"\x00TGHTML{len(placeholders)}\x00"
+            placeholders[key] = value
+            return key
+
+        text = content or ""
+        text = _VISIBILITY_MARKDOWN_LINK_RE.sub(
+            lambda m: _ph(
+                f'<a href="{_html.escape(m.group(2), quote=True)}">'
+                f'{_html.escape(m.group(1))}</a>'
+            ),
+            text,
+        )
+        text = _html.escape(text)
+        text = re.sub(
+            r"(?m)^##\s+(.+)$",
+            lambda m: f"<b>{m.group(1).strip()}</b>",
+            text,
+        )
+        text = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+        for key, value in placeholders.items():
+            text = text.replace(key, value)
+        return text
+
+    async def _send_visibility_cron_html(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+        *,
+        actions: bool,
+    ) -> SendResult:
+        """Send a visibility cron card using Telegram HTML + optional buttons."""
+        thread_id = self._metadata_thread_id(metadata)
+        reply_to_id = self._reply_to_message_id_for_send(
+            reply_to,
+            metadata,
+            reply_to_mode=self._reply_to_mode,
+        )
+        kwargs: Dict[str, Any] = {
+            "chat_id": normalize_telegram_chat_id(chat_id),
+            "text": self._visibility_html(content),
+            "parse_mode": ParseMode.HTML,
+            "reply_to_message_id": reply_to_id,
+            **self._thread_kwargs_for_send(
+                chat_id,
+                thread_id,
+                metadata,
+                reply_to_message_id=reply_to_id,
+                reply_to_mode=self._reply_to_mode,
+            ),
+            **self._link_preview_kwargs(),
+            **self._notification_kwargs(metadata),
+        }
+        if actions:
+            kwargs["reply_markup"] = self._cron_action_keyboard("visibility")
+        try:
+            msg = await self._send_message_with_thread_fallback(**kwargs)
+            return SendResult(success=True, message_id=str(msg.message_id))
+        except Exception as exc:
+            logger.warning(
+                "[%s] visibility cron HTML send failed: %s",
+                self.name,
+                _redact_telegram_error_text(exc),
+            )
+            return SendResult(success=False, error=_redact_telegram_error_text(exc))
+
     async def send(
         self,
         chat_id: str,
@@ -4320,6 +4481,37 @@ class TelegramAdapter(BasePlatformAdapter):
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
         if not content or not content.strip():
             return SendResult(success=True, message_id=None)
+
+        cron_action_mode, content = self._extract_cron_action_marker(content)
+        if cron_action_mode == "visibility":
+            split_parts = self._split_visibility_cron_report(content)
+            if split_parts:
+                message_ids: list[str] = []
+                for idx, part in enumerate(split_parts):
+                    result = await self._send_visibility_cron_html(
+                        chat_id,
+                        part,
+                        reply_to=reply_to,
+                        metadata=metadata,
+                        actions=idx > 0,
+                    )
+                    if not result.success:
+                        return result
+                    if result.message_id:
+                        message_ids.append(str(result.message_id))
+                return SendResult(
+                    success=True,
+                    message_id=message_ids[-1] if message_ids else None,
+                    raw_response={"split_visibility_report": True, "message_ids": message_ids},
+                )
+            return await self._send_visibility_cron_html(
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                actions=True,
+            )
+        cron_action_keyboard = self._cron_action_keyboard(cron_action_mode)
         
         try:
             # Bot API 10.1 rich fast-path: send the raw agent markdown via
@@ -4327,7 +4519,7 @@ class TelegramAdapter(BasePlatformAdapter):
             # through to the legacy MarkdownV2 path on permanent/capability
             # errors or DM-topic routing skips; returns directly on success or
             # on a transient failure (which must NOT be legacy-resent).
-            if self._should_attempt_rich(content, metadata=metadata):
+            if cron_action_keyboard is None and self._should_attempt_rich(content, metadata=metadata):
                 rich_result = await self._try_send_rich(chat_id, content, reply_to, metadata)
                 if rich_result is not None:
                     if rich_result.success:
@@ -4433,6 +4625,7 @@ class TelegramAdapter(BasePlatformAdapter):
                                 text=chunk,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 reply_to_message_id=reply_to_id,
+                                reply_markup=cron_action_keyboard if i == 0 else None,
                                 **thread_kwargs,
                                 **self._link_preview_kwargs(),
                                 **self._notification_kwargs(metadata),
@@ -4447,6 +4640,7 @@ class TelegramAdapter(BasePlatformAdapter):
                                     text=plain_chunk,
                                     parse_mode=None,
                                     reply_to_message_id=reply_to_id,
+                                    reply_markup=cron_action_keyboard if i == 0 else None,
                                     **thread_kwargs,
                                     **self._link_preview_kwargs(),
                                     **self._notification_kwargs(metadata),
@@ -6184,6 +6378,144 @@ class TelegramAdapter(BasePlatformAdapter):
         except Exception:
             pass
 
+    async def _handle_cron_action_callback(
+        self,
+        query,
+        data: str,
+        *,
+        query_chat_id,
+        query_chat_type,
+        query_thread_id,
+        query_user_name,
+    ) -> None:
+        """Handle inline action buttons attached to marked cron reports."""
+        action = data.split(":", 1)[1] if ":" in data else ""
+        caller_id = str(getattr(query.from_user, "id", ""))
+        if not self._is_callback_user_authorized(
+            caller_id,
+            chat_id=query_chat_id,
+            chat_type=str(query_chat_type) if query_chat_type is not None else None,
+            thread_id=str(query_thread_id) if query_thread_id is not None else None,
+            user_name=query_user_name,
+        ):
+            await query.answer(text="⛔ You are not authorized to act on this report.")
+            return
+
+        message = getattr(query, "message", None)
+        if message is None:
+            await query.answer(text="Report message unavailable.")
+            return
+
+        report_text = (
+            getattr(message, "text", None)
+            or getattr(message, "caption", None)
+            or ""
+        ).strip()
+
+        def _record_action() -> None:
+            try:
+                from datetime import datetime, timezone
+                import json as _json
+                from hermes_constants import get_hermes_home
+
+                out_dir = get_hermes_home() / "cron" / "actions"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                record = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "platform": "telegram",
+                    "action": action,
+                    "chat_id": str(query_chat_id),
+                    "thread_id": str(query_thread_id) if query_thread_id is not None else None,
+                    "message_id": str(getattr(message, "message_id", "")),
+                    "user_id": caller_id,
+                    "user_name": query_user_name,
+                    "text_excerpt": report_text[:500],
+                }
+                with (out_dir / "visibility-actions.jsonl").open("a", encoding="utf-8") as fh:
+                    fh.write(_json.dumps(record, ensure_ascii=False) + "\n")
+                logger.info(
+                    "[%s] cron visibility action recorded: action=%s chat=%s message=%s user=%s",
+                    self.name,
+                    action,
+                    query_chat_id,
+                    getattr(message, "message_id", ""),
+                    caller_id,
+                )
+            except Exception as exc:
+                logger.warning("[%s] failed to record cron action: %s", self.name, exc)
+
+        _record_action()
+
+        if action in {"useful", "dismiss"}:
+            label = "✅ Marked useful" if action == "useful" else "Dismissed"
+            await query.answer(text=label)
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            return
+
+        if action not in {"draft", "prioritize"}:
+            await query.answer(text="Unknown action.")
+            return
+        if action == "draft":
+            prompt = (
+                "Draft a concise reply or public-comment angle from this visibility "
+                "cron report. Do not publish, post, like, comment, or call any "
+                "social-media write API. If a public action is useful, prepare a "
+                "draft and ask Nico for approval."
+            )
+            ack = "Drafting reply angle…"
+        else:
+            prompt = (
+                "Prioritize this visibility cron report. Pick the best next action, "
+                "explain why, and ask Nico one concrete approval question if public "
+                "engagement is warranted. Do not publish, post, like, comment, or call "
+                "any social-media write API."
+            )
+            ack = "Prioritizing…"
+
+        await query.answer(text=ack)
+
+        chat = getattr(message, "chat", None)
+        from_user = getattr(query, "from_user", None)
+        chat_type_value = str(getattr(chat, "type", query_chat_type) or "").split(".")[-1].lower()
+        chat_type = "dm"
+        if chat_type_value in {"group", "supergroup"}:
+            chat_type = "group"
+        elif chat_type_value == "channel":
+            chat_type = "channel"
+
+        thread_id = str(query_thread_id) if query_thread_id is not None else None
+        source = self.build_source(
+            chat_id=str(query_chat_id),
+            chat_name=(
+                getattr(chat, "title", None)
+                or getattr(chat, "full_name", None)
+                or None
+            ),
+            chat_type=chat_type,
+            user_id=str(getattr(from_user, "id", "")) if from_user else None,
+            user_name=(
+                getattr(from_user, "full_name", None)
+                or getattr(from_user, "first_name", None)
+                or None
+            ),
+            thread_id=thread_id,
+            message_id=str(getattr(message, "message_id", "")),
+            is_bot=False,
+        )
+        event = MessageEvent(
+            text=f"{prompt}\n\nCron report context:\n{report_text}",
+            message_type=MessageType.TEXT,
+            source=source,
+            raw_message=message,
+            message_id=f"{getattr(message, 'message_id', '')}:cr:{action}",
+            reply_to_message_id=str(getattr(message, "message_id", "")),
+            reply_to_text=report_text or None,
+        )
+        await self.handle_message(event)
+
     async def _handle_callback_query(
         self, update: "Update", context: "ContextTypes.DEFAULT_TYPE"
     ) -> None:
@@ -6216,6 +6548,18 @@ class TelegramAdapter(BasePlatformAdapter):
         # --- Gmail-triage callbacks (gt:verb:arg) ---
         if data.startswith("gt:"):
             await self._handle_gmail_triage_callback(
+                query,
+                data,
+                query_chat_id=query_chat_id,
+                query_chat_type=query_chat_type,
+                query_thread_id=query_thread_id,
+                query_user_name=query_user_name,
+            )
+            return
+
+        # --- Cron report action callbacks (cr:verb) ---
+        if data.startswith("cr:"):
+            await self._handle_cron_action_callback(
                 query,
                 data,
                 query_chat_id=query_chat_id,
