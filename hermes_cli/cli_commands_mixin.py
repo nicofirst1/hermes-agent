@@ -1393,7 +1393,6 @@ class CLICommandsMixin:
         # turn's remaining messages land on the branch. Refuse mid-turn like /handoff does.
         if getattr(self, "_agent_running", False):
             return _cp("  Agent is busy. Wait for the current turn to finish, then retry /branch.")
-        from cli import _sync_process_session_id
         if not self.conversation_history:
             return _cp("  No conversation to branch — send a message first.")
         if not self._session_db:
@@ -1401,6 +1400,22 @@ class CLICommandsMixin:
         # CLI has no threads: always in place; strip the gateway's ``--here`` so it is never a title.
         from gateway.slash_commands_branch_thread import parse_branch_args
         _, branch_name = parse_branch_args(_command_arg(cmd_original))
+        created = self._create_branch_session(branch_name)
+        if not created:
+            return
+        new_session_id, branch_title, parent_session_id = created
+        msg_count = len([m for m in self.conversation_history if m.get("role") == "user"])
+        _cp(f"  ⑂ Branched session \"{branch_title}\" ({_plural(msg_count, 'user message')})",
+            f"  Original session: {parent_session_id}",
+            f"  Branch session:   {new_session_id}")
+
+    def _create_branch_session(self, branch_name: str | None, *, end_parent: bool = True):
+        """Shared core of /branch and /split: create a branched child session with the full
+        history copied. Returns ``(new_session_id, branch_title, parent_session_id)`` or None
+        after printing why. With ``end_parent`` (the /branch semantics) the parent row is ended
+        and THIS window switches to the branch; /split passes ``end_parent=False`` — this
+        process keeps the parent and the spawned pane takes the branch via --resume."""
+        from cli import _sync_process_session_id
         now = datetime.now()
         new_session_id = mint_session_id(now)
         branch_title = branch_name or self._session_db.get_next_title_in_lineage(
@@ -1417,8 +1432,10 @@ class CLICommandsMixin:
                 model_config={"max_iterations": self.max_turns, "reasoning_config": self.reasoning_config,
                               "_branched_from": parent_session_id})
         except Exception as e:
-            return _cp(f"  Failed to create branch session: {e}")
-        _end_current_session(self, "branched")
+            _cp(f"  Failed to create branch session: {e}")
+            return None
+        if end_parent:
+            _end_current_session(self, "branched")
         # Best-effort chunked copy (a failed copy still yields a usable branch); the api_content
         # sidecar lets the branch's first turn replay the parent's exact wire bytes (warm cache).
         with suppress(Exception):
@@ -1429,6 +1446,8 @@ class CLICommandsMixin:
                 for msg in self.conversation_history], chunk_rows=500)
         with suppress(Exception):
             self._session_db.set_session_title(new_session_id, branch_title)
+        if not end_parent:
+            return new_session_id, branch_title, parent_session_id
         # Switch to the new session
         self._transfer_session_yolo(self.session_id, new_session_id)
         self.session_id, self.session_start, self._pending_title = new_session_id, now, None
@@ -1437,9 +1456,36 @@ class CLICommandsMixin:
         if self.agent:
             self.agent.session_start = now
         _sync_agent_to_session(self, new_session_id, parent_session_id=parent_session_id, reason="branch")
+        return new_session_id, branch_title, parent_session_id
+
+    def _handle_split_command(self, cmd_original: str) -> None:
+        """Handle /split [name] [--inplace] — fork the session and open the branch in a new
+        herdr split pane (or OS terminal window) while THIS window stays on the parent."""
+        arg = _command_arg(cmd_original) or ""
+        if "--inplace" in arg.split():
+            name = " ".join(t for t in arg.split() if t != "--inplace")
+            return self._handle_branch_command(f"/branch {name}" if name else "/branch")
+        if getattr(self, "_agent_running", False):
+            return _cp("  Agent is busy. Wait for the current turn to finish, then retry /split.")
+        if not self.conversation_history:
+            return _cp("  No conversation to split — send a message first.")
+        if not self._session_db:
+            return _cp(_db_unavailable_line())
+        created = self._create_branch_session(arg.strip() or None, end_parent=False)
+        if not created:
+            return
+        new_session_id, branch_title, parent_session_id = created
         msg_count = len([m for m in self.conversation_history if m.get("role") == "user"])
-        _cp(f"  ⑂ Branched session \"{branch_title}\" ({_plural(msg_count, 'user message')})",
-            f"  Original session: {parent_session_id}", f"  Branch session:   {new_session_id}")
+        import hermes_cli.cli_window_spawn as _spawn
+        cwd = os.getcwd()
+        if _spawn.spawn_branch_surface(new_session_id, cwd):
+            spawned = f"✓ New pane opened with: hermes --resume {new_session_id}"
+        else:
+            spawned = f"  Nothing to spawn into — resume manually with: hermes --resume {new_session_id}"
+        _cp(f"  ⑂ Split session \"{branch_title}\" ({_plural(msg_count, 'user message')})",
+            f"  Parent session:   {parent_session_id}   (this window)",
+            f"  Branch session:   {new_session_id}   (opened in new pane)",
+            spawned)
 
     # ---- /worktree ------------------------------------------------------------------------
     def _handle_worktree_command(self, cmd_original: str) -> None:

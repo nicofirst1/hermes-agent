@@ -60,6 +60,12 @@ def cli_instance(tmp_path, session_db):
     )
     session_db.set_session_title(cli.session_id, "My Coding Session")
 
+    # Bind the real shared helper: the handlers call it as self._create_branch_session, which a
+    # MagicMock would otherwise answer with a MagicMock instead of running the real code.
+    from cli import HermesCLI
+    cli._create_branch_session = (
+        lambda branch_name, **kw: HermesCLI._create_branch_session(cli, branch_name, **kw))
+
     return cli
 
 
