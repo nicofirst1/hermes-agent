@@ -2581,6 +2581,24 @@
       }
     },
     {
+      "name": "reload.plugins",
+      "summary": "Force plugin re-discovery (plugins.enabled hot reload, /reload-plugins; prompt cache is invalidated).",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/ReloadPluginsParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ReloadPluginsResult"
+        }
+      }
+    },
+    {
       "name": "request.answer",
       "summary": "Answer an open server\u2192client request from a client that never received the frame.",
       "params": [
@@ -22681,6 +22699,186 @@
         ],
         "title": "ReloadMcpStatus",
         "type": "string"
+      },
+      "ReloadPluginChange": {
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "key",
+          "kind"
+        ],
+        "title": "ReloadPluginChange",
+        "type": "object"
+      },
+      "ReloadPluginError": {
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "error"
+        ],
+        "title": "ReloadPluginError",
+        "type": "object"
+      },
+      "ReloadPluginsParams": {
+        "additionalProperties": false,
+        "description": "Without ``confirm`` the handler answers ``confirm_required`` (per\n``approvals.plugins_reload_confirm``).",
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "title": "ReloadPluginsParams",
+        "type": "object"
+      },
+      "ReloadPluginsResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ReloadMcpStatus"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "added": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReloadPluginChange"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Added"
+          },
+          "removed": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReloadPluginChange"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Removed"
+          },
+          "unchanged": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unchanged"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Total"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReloadPluginError"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Errors"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ReloadPluginsResult",
+        "type": "object"
       },
       "RepoDiscoveryPolicy": {
         "additionalProperties": false,

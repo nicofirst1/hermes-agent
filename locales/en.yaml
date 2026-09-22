@@ -254,6 +254,12 @@ gateway:
     tools_available:       "\n🔧 {tools} tool(s) available from {servers} server(s)"
     failed:                "❌ MCP reload failed: {error}"
 
+  reload_plugins:
+    cancelled:             "🟡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup:       "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt:        "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed:                "❌ Plugin reload failed: {error}"
+
   reload_skills:
     header:                "🔄 **Skills Reloaded**\n"
     no_new:                "No new skills detected."

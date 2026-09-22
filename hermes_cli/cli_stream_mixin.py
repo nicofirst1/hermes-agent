@@ -32,6 +32,8 @@ _SLOW_COMMAND_STATUS = (
     ("/skills", "Processing skills command..."), ("/browser", "Configuring browser..."))
 _SLOW_COMMAND_STATUS_EXACT = {
     "/reload-mcp": "Reloading MCP servers...",
+    "/reload-plugins": "Reloading plugins...",
+    "/reload_plugins": "Reloading plugins...",
     "/reload-skills": "Reloading skills...",
     "/reload_skills": "Reloading skills..."}
 

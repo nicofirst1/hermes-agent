@@ -14,7 +14,7 @@ interface CommandRegistryLoad {
   names: string[]
 }
 
-const NATIVE_MUTATING_COMMANDS = new Set(['browser', 'busy', 'fast', 'reload-mcp', 'rollback', 'stop'])
+const NATIVE_MUTATING_COMMANDS = new Set(['browser', 'busy', 'fast', 'reload-mcp', 'reload-plugins', 'rollback', 'stop'])
 
 const MUTATING_COMMANDS = [
   'bg',
@@ -31,6 +31,7 @@ const MUTATING_COMMANDS = [
   'queue',
   'reasoning',
   'reload-mcp',
+  'reload-plugins',
   'retry',
   'rollback',
   'steer',
@@ -100,6 +101,7 @@ describe('slash parity matrix', () => {
     expect(routes['model']).toBe('local')
     expect(routes['browser']).toBe('native')
     expect(routes['reload-mcp']).toBe('native')
+    expect(routes['reload-plugins']).toBe('native')
     expect(routes['rollback']).toBe('native')
     expect(routes['stop']).toBe('native')
   })

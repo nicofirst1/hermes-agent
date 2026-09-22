@@ -270,6 +270,49 @@ def _mcp_reload_confirm_required() -> bool:
         return True
 
 
+def _plugins_reload_confirm_required() -> bool:
+    """``approvals.plugins_reload_confirm`` from disk config; True (safe) on any failure."""
+    try:
+        cfg = _tools_mod("hermes_cli.config").load_config()
+        approvals = cfg.get("approvals") if isinstance(cfg, dict) else None
+        return bool(approvals.get("plugins_reload_confirm", True)) if isinstance(approvals, dict) else True
+    except Exception:
+        return True
+
+
+@_rpc("reload.plugins", 5015)
+def _(rid, params: dict) -> dict:
+    """Force plugin re-discovery (``/reload-plugins``): plugins.enabled config changes reach the
+    running session without ``/new``. Same prompt-cache gate as reload.mcp — plugin tool changes
+    rebuild the tool schema mid-conversation. Cached agents keep their build-time toolset
+    selection; each live session's tool snapshot refreshes from the live registry."""
+    session = _sessions.get(params.get("session_id", ""))
+    if not bool(params.get("confirm", False)) and _plugins_reload_confirm_required():
+        message = (
+            "⚠️  /reload-plugins invalidates the prompt cache (next message re-sends full input tokens). "
+            "Reply `/reload-plugins now` to proceed, or `/reload-plugins always` to proceed and "
+            "silence this prompt permanently.")
+        return _ok(rid, {"status": "confirm_required", "message": message})
+    try:
+        from hermes_cli.plugins_reload import reload_plugins, summarize_reload_plugins
+        result = reload_plugins()
+    except Exception as exc:
+        return _err(rid, 5019, f"plugin reload failed: {exc}")
+    # Refresh EVERY live session's cached tool snapshot (same contract as reload.mcp: the plugin
+    # registry is process-global; refreshing only the requester would leave siblings stale).
+    from tools.mcp_tool_agent import refresh_agent_mcp_tools
+    with _sessions_lock:
+        live = [(sid, sess) for sid, sess in _sessions.items() if sess.get("agent") is not None]
+    for sid, sess in live:
+        try:
+            with _session_profile_runtime_scope(sess):
+                refresh_agent_mcp_tools(sess["agent"], quiet_mode=True)
+        except Exception as exc:
+            logger.warning("Failed to refresh cached agent tools after /reload-plugins (session %s): %s", sid, exc)
+        _emit("session.info", sid, _session_info(sess["agent"], sess))
+    return _ok(rid, {"status": "reloaded", "result": result, "summary": summarize_reload_plugins(result)})
+
+
 @_rpc("reload.mcp", 5015)
 def _(rid, params: dict) -> dict:
     session = _sessions.get(params.get("session_id", ""))

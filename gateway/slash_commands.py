@@ -1086,6 +1086,37 @@ class GatewaySlashCommandsMixin(
             event=event, command="reload-mcp", title="/reload-mcp",
             message=t("gateway.reload_mcp.confirm_prompt"), handler=_on_confirm)
 
+    async def _handle_reload_plugins_command(self, event: MessageEvent) -> str:
+        """Handle /reload-plugins — force plugin re-discovery so ``plugins.enabled`` changes take
+        effect without ``/new``. Tool schemas live in the system prompt, so plugin tool changes
+        invalidate the provider prompt cache; routes through slash-confirm like /reload-mcp,
+        "Always Approve" persists ``approvals.plugins_reload_confirm: false``."""
+        session_key = self._session_key_for_source(event.source)
+        # Read the gate fresh from disk so a prior "always" click takes effect on the next
+        # invocation without restarting the gateway.
+        user_config = self._read_user_config()
+        approvals = user_config.get("approvals") if isinstance(user_config, dict) else None
+        if isinstance(approvals, dict) and not approvals.get("plugins_reload_confirm", True):
+            return await self._execute_plugins_reload(event)
+
+        async def _on_confirm(choice: str) -> Optional[str]:
+            if choice == "cancel":
+                return t("gateway.reload_plugins.cancelled")
+            if choice == "always":
+                try:
+                    from cli import save_config_value
+                    save_config_value("approvals.plugins_reload_confirm", False)
+                    logger.info("User opted out of /reload-plugins confirmation (session=%s)", session_key)
+                except Exception as exc:
+                    logger.warning("Failed to persist plugins_reload_confirm=false: %s", exc)
+            result = await self._execute_plugins_reload(event)
+            if choice == "always":
+                return f"{result}\n\n" + t("gateway.reload_plugins.always_followup")
+            return result
+        return await self._request_slash_confirm(
+            event=event, command="reload-plugins", title="/reload-plugins",
+            message=t("gateway.reload_plugins.confirm_prompt"), handler=_on_confirm)
+
     async def _handle_reload_skills_command(self, event: MessageEvent) -> str:
         """Handle /reload-skills — rescan skills dir, queue a note for next turn. Skills are invoked at
         runtime, not baked into the system prompt, so this does NOT clear the prompt cache. The diff

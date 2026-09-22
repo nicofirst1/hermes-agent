@@ -71,6 +71,7 @@ def build_relay_command_manifest() -> List[Dict[str, Any]]:
         _cmd("help", "Show available commands"),
         _cmd("insights", "Show usage insights and analytics"),
         _cmd("reload-mcp", "Reload MCP servers from config"),
+        _cmd("reload-plugins", "Reload plugins from config (hot enable/disable)"),
         _cmd("reload-skills", "Re-scan skills for new or removed entries"),
         _cmd("voice", "Toggle voice reply mode"),
         _cmd("update", "Update Hermes Agent to the latest version"),

@@ -3392,6 +3392,32 @@ export interface ReloadMcpResult {
   host_ack?: unknown | null
 }
 export type ReloadMcpStatus = 'confirm_required' | 'reloaded'
+/** Without ``confirm`` the handler answers ``confirm_required`` (per ``approvals.plugins_reload_confirm``). */
+export interface ReloadPluginsParams {
+  session_id?: string | null
+  confirm?: boolean
+}
+export interface ReloadPluginsResult {
+  status: ReloadMcpStatus
+  message?: string | null
+  added?: ReloadPluginChange[] | null
+  removed?: ReloadPluginChange[] | null
+  unchanged?: string[] | null
+  total?: number | null
+  errors?: ReloadPluginError[] | null
+  summary?: string[] | null
+}
+export interface ReloadPluginChange {
+  name: string
+  key: string
+  kind: string
+  [key: string]: unknown
+}
+export interface ReloadPluginError {
+  name: string
+  error: string
+  [key: string]: unknown
+}
 /** ``query`` is the search text / hub identifier / browse page (digits); ``page`` / ``page_size`` apply to ``browse``. */
 export interface SkillsManageParams {
   profile?: string | null
@@ -4502,6 +4528,8 @@ export interface RpcMethods {
   'reload.env': { params: ReloadEnvParams; result: ReloadEnvResult }
   /** Tear down and rediscover MCP servers for every live session (prompt cache is invalidated). */
   'reload.mcp': { params: ReloadMcpParams; result: ReloadMcpResult }
+  /** Force plugin re-discovery (plugins.enabled hot reload, /reload-plugins; prompt cache is invalidated). */
+  'reload.plugins': { params: ReloadPluginsParams; result: ReloadPluginsResult }
   /** Answer an open server→client request from a client that never received the frame. */
   'request.answer': { params: RequestAnswerParams; result: RequestAnswerResult }
   /** Diff between a checkpoint and the working tree, with an ANSI rendering sized to the TUI. */
@@ -4800,6 +4828,7 @@ export const RPC_METHODS = [
   'prompt.submit',
   'reload.env',
   'reload.mcp',
+  'reload.plugins',
   'request.answer',
   'rollback.diff',
   'rollback.list',

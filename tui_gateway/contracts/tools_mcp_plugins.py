@@ -137,6 +137,40 @@ method("reload.mcp", params=ReloadMcpParams, result=ReloadMcpResult,
        doc="Tear down and rediscover MCP servers for every live session (prompt cache is invalidated).")
 
 
+class ReloadPluginsParams(Params):
+    """Without ``confirm`` the handler answers ``confirm_required`` (per
+    ``approvals.plugins_reload_confirm``)."""
+
+    session_id: str | None = None
+    confirm: bool = False
+
+
+class ReloadPluginChange(OpenModel):
+    name: str
+    key: str
+    kind: str
+
+
+class ReloadPluginError(OpenModel):
+    name: str
+    error: str
+
+
+class ReloadPluginsResult(Result):
+    status: ReloadMcpStatus
+    message: str | None = None
+    added: list[ReloadPluginChange] | None = None
+    removed: list[ReloadPluginChange] | None = None
+    unchanged: list[str] | None = None
+    total: int | None = None
+    errors: list[ReloadPluginError] | None = None
+    summary: list[str] | None = None
+
+
+method("reload.plugins", params=ReloadPluginsParams, result=ReloadPluginsResult,
+       doc="Force plugin re-discovery (plugins.enabled hot reload, /reload-plugins; prompt cache is invalidated).")
+
+
 # ── skills ────────────────────────────────────────────────────────────────────────────────────
 
 

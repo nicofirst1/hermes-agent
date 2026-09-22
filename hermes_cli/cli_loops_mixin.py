@@ -236,6 +236,19 @@ class CLILoopsMixin:
         with self._busy_command(self._slow_command_status(cmd_original)):
             self._reload_skills()
 
+    def _cmd_reload_plugins(self, cmd_original: str):
+        """`/reload-plugins` — force plugin re-discovery so `plugins.enabled` config changes
+        (enable/disable via CLI, dashboard, or a `git pull` config reset) take effect without
+        `/new`. Tool-schema changes invalidate the prompt cache — flagged in the summary."""
+        with self._busy_command(self._slow_command_status(cmd_original)):
+            try:
+                from hermes_cli.plugins_reload import reload_plugins, summarize_reload_plugins
+                result = reload_plugins()
+                if not self._command_running:
+                    print("\n".join(summarize_reload_plugins(result)))
+            except Exception as e:
+                print(f"  ❌ Plugin reload failed: {e}")
+
     def _cmd_plugins(self, cmd_original: str):
         from hermes_constants import display_hermes_home
         try:

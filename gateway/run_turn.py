@@ -2607,6 +2607,66 @@ class GatewayTurnMixin:
             logger.warning("MCP reload failed: %s", e)
             return t("gateway.reload_mcp.failed", error=e)
 
+    async def _execute_plugins_reload(self, event: MessageEvent) -> str:
+        """Force plugin re-discovery and report the loaded-plugin diff (shared by the confirm
+        button / text / no-confirm paths of /reload-plugins).
+
+        Under multiplex the reload runs inside the requesting profile's runtime scope (entered here
+        when the caller did not), mirroring ``_execute_mcp_reload``. Cached agents keep their
+        build-time toolset selection — a session restricted to a toolset subset must not gain
+        tools — and are refreshed from the live registry so the next turn sees plugin tool changes.
+        """
+        from gateway.run import _profile_runtime_scope
+        multiplex = bool(getattr(self.config, "multiplex_profiles", False))
+        if multiplex and not get_hermes_home_override():
+            profile_home = self._resolve_profile_home_for_source(event.source)
+            with _profile_runtime_scope(Path(profile_home)):
+                return await self._execute_plugins_reload(event)
+        try:
+            from hermes_cli.plugins_reload import reload_plugins, summarize_reload_plugins
+
+            # _run_in_executor_with_context, not a bare hop: discovery walks the active profile's
+            # HERMES_HOME (contextvar override under multiplex) and mutates shared registries.
+            result = await self._run_in_executor_with_context(reload_plugins)
+
+            self._plugins_reload_refresh_cached_agents(multiplex, event.source.profile)
+
+            lines = summarize_reload_plugins(result)
+            reload_msg = {
+                "role": "user",
+                "content": f"[IMPORTANT: Plugins have been reloaded. {', '.join(lines[1:-1]) or 'No plugin changes.'}]",
+            }
+            with suppress(Exception):  # Best-effort; don't fail the reload over a transcript write
+                session_entry = await self.async_session_store.get_or_create_session(event.source)
+                await self.async_session_store.append_to_transcript(session_entry.session_id, reload_msg)
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.warning("Plugin reload failed: %s", e)
+            return t("gateway.reload_plugins.failed", error=e)
+
+    def _plugins_reload_refresh_cached_agents(self, multiplex: bool, profile) -> None:
+        """Refresh cached agents so existing sessions see plugin tool changes on their next turn
+        without a history-destroying ``/new``. Each agent keeps its build-time toolset selection
+        EXACTLY (same contract as ``_mcp_reload_refresh_cached_agents``)."""
+        try:
+            from tools.mcp_tool_agent import refresh_agent_mcp_tools
+            _cache = getattr(self, "_agent_cache", None)
+            _cache_lock = getattr(self, "_agent_cache_lock", None)
+            if _cache_lock is None or not _cache:
+                return
+            _ns_prefix = _session_key_namespace(profile) + ":" if multiplex else None
+            with _cache_lock:
+                for _sess_key, _entry in list(_cache.items()):
+                    if _ns_prefix and not str(_sess_key).startswith(_ns_prefix):
+                        continue
+                    _agent = _entry[0] if isinstance(_entry, tuple) else _entry
+                    if _agent is not None:
+                        refresh_agent_mcp_tools(_agent, quiet_mode=True)
+        except Exception as _exc:
+            logger.debug("Failed to update cached agent tools after plugin reload: %s", _exc)
+
     def _get_proxy_url(self) -> Optional[str]:
         """Proxy URL if proxy mode is configured (GATEWAY_PROXY_URL env wins over ``gateway.proxy_url``).
         Per-profile like GATEWAY_PROXY_KEY: under multiplex a raw environ read would ship a secondary's

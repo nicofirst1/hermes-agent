@@ -438,6 +438,12 @@ export interface ReloadMcpResponse {
   loaded_rev?: string
 }
 
+export interface ReloadPluginsResponse {
+  status?: string
+  message?: string
+  summary?: string[]
+}
+
 export interface ReloadEnvResponse {
   updated?: number
 }

@@ -1663,6 +1663,9 @@ DEFAULT_CONFIG = {
         # /reload-mcp confirms before rebuilding the MCP tool set (it invalidates the prompt cache,
         # so the next message re-sends full input). "Always Approve" → false.
         "mcp_reload_confirm": True,
+        # /reload-plugins confirms before rebuilding the plugin tool set (same prompt-cache cost
+        # as /reload-mcp). "Always Approve" → false.
+        "plugins_reload_confirm": True,
         # /clear, /new, /reset, /undo confirm before discarding state (Approve Once / Always Approve
         # / Cancel via tools.slash_confirm; native buttons on Telegram/ Discord/Slack). "Always
         # Approve" → false. HERMES_TUI_NO_CONFIRM=1 skips the TUI modal.

@@ -5,6 +5,7 @@ import type {
   ProcessStopResponse,
   ReloadEnvResponse,
   ReloadMcpResponse,
+  ReloadPluginsResponse,
   RollbackDiffResponse,
   RollbackListResponse,
   RollbackRestoreResponse,
@@ -121,6 +122,43 @@ export const opsCommands: SlashCommand[] = [
             }
 
             ctx.transcript.sys('reload complete')
+          })
+        )
+        .catch(ctx.guardedErr)
+    }
+  },
+
+  {
+    aliases: ['reload_plugins'],
+    help: 'reload plugins from config (hot enable/disable; warns about prompt cache invalidation)',
+    name: 'reload-plugins',
+    run: (arg, ctx) => {
+      // Parse arg: `now` skips the confirmation gate (same grammar as /reload-mcp).
+      const a = (arg || '').trim().toLowerCase()
+      const params: { session_id: string | null; confirm?: boolean } = { session_id: ctx.sid }
+      if (a === 'now' || a === 'approve' || a === 'once' || a === 'yes' || a === 'always') {
+        params.confirm = true
+      }
+
+      ctx.gateway
+        .rpc<ReloadPluginsResponse>('reload.plugins', params)
+        .then(
+          ctx.guarded<ReloadPluginsResponse>(r => {
+            if (r.status === 'confirm_required') {
+              ctx.transcript.sys(r.message || '/reload-plugins requires confirmation')
+
+              return
+            }
+
+            if (r.summary && r.summary.length > 0) {
+              for (const line of r.summary) {
+                ctx.transcript.sys(line)
+              }
+
+              return
+            }
+
+            ctx.transcript.sys('plugins reloaded')
           })
         )
         .catch(ctx.guardedErr)
