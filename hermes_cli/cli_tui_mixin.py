@@ -1914,6 +1914,16 @@ class CLITuiMixin:
             lambda: bool(self._secret_state or self._sudo_state or self._slash_confirm_state))
         kb.add('escape', filter=_modal_prompt_active, eager=True)(self._tui_handle_escape_modal)
         kb.add('escape', 'escape', filter=~_modal_prompt_active)(self._tui_handle_double_escape)
+        # ESC interrupts a running agent (#65303), same chain as Ctrl+Q. Non-eager on purpose so
+        # ESC stays the Alt-sequence prefix (escape+enter/g/v) — the binding fires only after the
+        # escape timeout. Filtered on a busy composer with no modal/overlay prompt owning ESC;
+        # the prompt-stash panel is excluded so its eager close binding keeps winning.
+        _busy_input_no_modal = Condition(
+            lambda: self._agent_running and self.agent and not self._clarify_state
+            and not self._approval_state and not self._secret_state and not self._sudo_state
+            and not self._slash_confirm_state and not self._model_picker_state
+            and not self._command_palette_state and not self._prompt_stash.panel_open)
+        kb.add('escape', filter=_busy_input_no_modal)(self._tui_handle_ctrl_q)
         kb.add('c-z')(self._tui_handle_ctrl_z)
 
         kb.add(*self._tui_voice_record_key_sequence())(self._tui_handle_voice_record)

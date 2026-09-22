@@ -126,6 +126,16 @@ class SearchResult:
 
     def to_dict(self, densify: bool = False) -> dict:
         result: dict[str, object] = {"total_count": self.total_count}
+        if (not result["total_count"] and not self.matches and not self.files
+                and not self.counts and not self.error):
+            # Self-describing so a terse empty result is never misread as a
+            # lost/failed message: the search executed and found nothing.
+            result["note"] = (
+                "0 matches — the search ran correctly and found nothing. "
+                "This is a normal empty result, not an error or a lost "
+                "message: treat it as 'not found' and proceed (broaden the "
+                "pattern/path, try the other target, or report the miss)."
+            )
         if self.matches:
             dense = self._densify_matches() if densify else None
             if dense is not None:
