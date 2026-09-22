@@ -1503,6 +1503,8 @@ def _plugin_rows() -> list[dict]:
             "source": source, "status": status, "portable": pc._is_portable_plugin_dir(_dir),
             "install_dir": str(_dir_path) if _dir_path else "",
             "has_desktop_half": bool(_dir_path and (_dir_path / "desktop" / "plugin.js").is_file()),
+            # Manifest ``config_schema`` + current values: the Plugins hub renders these as a form.
+            "settings_schema": _tools_mod("hermes_cli.plugins_settings").plugin_settings_fields(key, _dir_path),
             **cat.catalog_row_fields(_dir, pins, versions),
             **({"pinned_sha": sha} if (sha := pc.pinned_revision(name, ref_pins)) else {})})
     return out
@@ -1544,7 +1546,10 @@ def _plugins_install(rid, params):
 
 
 def _plugins_update(rid, params):
-    """Catalog installs only: re-pin to the current catalog SHA (non-catalog installs update via the CLI)."""
+    """Catalog installs only: re-pin to the current catalog SHA (non-catalog installs update via the CLI).
+    A pin that widens the plugin (new tools/hooks/deps/capabilities/Desktop half) answers
+    ``{ok: false, consent_required: true, delta, delta_lines}`` with nothing changed; the client shows the
+    delta and retries with ``accept_capabilities: true``."""
     name = (params.get("name") or "").strip()
     if not name:
         return _err(rid, 4019, "plugins.update requires a 'name'")
@@ -1554,7 +1559,11 @@ def _plugins_update(rid, params):
     if not sidecar:
         return _err(rid, 4020, f"'{name}' is not a catalog install — update it via the CLI")
     try:
-        result = cat.repin_catalog_plugin(target, sidecar)
+        result = cat.repin_catalog_plugin(
+            target, sidecar, consent_cb=(lambda _delta: True) if params.get("accept_capabilities") else None)
+    except cat.RepinConsentRequired as e:
+        return _ok(rid, {"ok": False, "consent_required": True, "name": e.name, "sha": e.sha, "delta": e.delta,
+                         "delta_lines": cat.surface_delta_lines(e.delta), "error": str(e)})
     except pc.PluginOperationError as e:
         return _err(rid, 4021, str(e))
     return _ok(rid, {"ok": True, "unchanged": not result.changed, "sha": result.sha, "name": result.installed_name,
@@ -1571,8 +1580,29 @@ def _plugins_remove(rid, params):
     return _ok(rid, result) if result.get("ok") else _err(rid, 5026, result.get("error") or "remove failed")
 
 
+def _plugins_settings(rid, params):
+    """Write manifest-declared settings (``values`` = ``{key: value}``) through the same writer as
+    ``ctx.set_config``; secrets are refused here (the client stores them via the ``.env`` route)."""
+    key = (params.get("key") or params.get("name") or "").strip()
+    values = params.get("values")
+    if not key or not isinstance(values, dict):
+        return _err(rid, 4019, "plugins.settings requires a 'key' and a 'values' mapping")
+    pc = _tools_mod("hermes_cli.plugins_cmd")
+    found = next((p for p in pc._discover_all_plugins() if key in (p[5], p[0])), None)
+    if found is None:
+        return _err(rid, 4020, f"plugin '{key}' not found")
+    _name, _version, _desc, _source, plugin_dir, canonical = found
+    try:
+        written = _tools_mod("hermes_cli.plugins_settings").save_plugin_settings(
+            canonical, Path(str(plugin_dir)) if plugin_dir else None, values)
+    except (ValueError, PermissionError) as e:
+        return _err(rid, 4021, str(e))
+    row = next((r for r in _plugin_rows() if r["key"] == canonical), None)
+    return _ok(rid, {"ok": True, "name": canonical, "written": written, "plugin": row})
+
+
 _PLUGINS_ACTIONS = {"list": _plugins_list, "toggle": _plugins_toggle, "install": _plugins_install,
-                    "update": _plugins_update, "remove": _plugins_remove}
+                    "update": _plugins_update, "remove": _plugins_remove, "settings": _plugins_settings}
 
 
 @_scoped_rpc("plugins.manage", 5026, catch_resolve=False)
@@ -1581,7 +1611,7 @@ def _(rid, params: dict) -> dict:
     ``list`` → {plugins, user_count, bundled_count}; ``toggle`` flips ``key``/``name`` per ``enable``;
     ``install`` git-clones ``identifier``/``repo`` or a curated ``catalog_name`` (``force``, ``enable``
     default True); ``update`` re-pins a catalog install to the current catalog SHA; ``remove`` deletes
-    a user install by ``name``."""
+    a user install by ``name``; ``settings`` writes manifest-declared ``values`` for ``key``."""
     return _run_action(rid, params, _PLUGINS_ACTIONS, "plugins")
 
 

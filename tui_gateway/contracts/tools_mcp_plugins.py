@@ -608,11 +608,14 @@ class PluginsAction(WireEnum):
     install = "install"
     update = "update"
     remove = "remove"
+    settings = "settings"
 
 
 class PluginsManageParams(ProfileParams):
     """``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name``
-    (+ ``force``, ``enable``, ``ref``); ``update``: ``name``; ``remove``: ``name`` (user installs only)."""
+    (+ ``force``, ``enable``, ``ref``); ``update``: ``name`` (+ ``accept_capabilities`` to apply a re-pin
+    that widened the plugin after the user confirmed the ``delta``); ``remove``: ``name`` (user installs only);
+    ``settings``: ``key`` + ``values`` (``{setting_key: value}``, non-secret schema keys only)."""
 
     action: PluginsAction = PluginsAction.list
     key: str | None = None
@@ -623,6 +626,34 @@ class PluginsManageParams(ProfileParams):
     catalog_name: str | None = None
     force: bool | None = None
     ref: str | None = None
+    accept_capabilities: bool | None = None
+    values: dict[str, JsonValue] | None = None
+
+
+class PluginSettingFieldType(WireEnum):
+    string = "string"
+    number = "number"
+    boolean = "boolean"
+    enum = "enum"
+    secret = "secret"
+    json = "json"
+
+
+class PluginSettingField(Result):
+    """One ``config_schema`` key of a plugin manifest, rendered by the Plugins hub
+    (``hermes_cli.plugins_settings.plugin_settings_fields``). ``secret`` fields carry no value: ``env``
+    names the ``.env`` variable and ``has_value`` whether it is set."""
+
+    key: str
+    type: PluginSettingFieldType
+    label: str
+    description: str
+    required: bool
+    value: JsonValue | None = None
+    default: JsonValue | None = None
+    choices: list[str] | None = None
+    env: str | None = None
+    has_value: bool | None = None
 
 
 class AgentPluginRow(Result):
@@ -644,12 +675,15 @@ class AgentPluginRow(Result):
     catalog_version: str | None = None
     update_available: bool | None = None
     pinned_sha: str | None = None
+    settings_schema: list[PluginSettingField] | None = None
 
 
 class PluginsManageResult(Result):
     """``list`` → ``plugins`` + counts; ``toggle`` → ``ok``/``unchanged``/``restart_required``/``name``
     (the canonical key written)/``plugin``; ``install`` → ``hermes_cli.plugins_cmd.dashboard_install_plugin``'s
-    ok payload; ``update`` → ``ok``/``unchanged``/``sha``; ``remove`` → ``ok``/``name`` plus
+    ok payload; ``update`` → ``ok``/``unchanged``/``sha``, or ``ok=false`` + ``consent_required`` with the
+    ``delta`` (``{surface: [added...]}``) / ``delta_lines`` a widened pin adds — nothing changed until the
+    client retries with ``accept_capabilities``; ``remove`` → ``ok``/``name`` plus
     ``cleared_memory_provider`` when the removed plugin was the live ``memory.provider``."""
 
     plugins: list[AgentPluginRow] | None = None
@@ -667,6 +701,11 @@ class PluginsManageResult(Result):
     after_install_path: str | None = None
     enabled: bool | None = None
     sha: str | None = None
+    consent_required: bool | None = None
+    delta: dict[str, list[str]] | None = None
+    delta_lines: list[str] | None = None
+    error: str | None = None
+    written: list[str] | None = None
 
 
 method("plugins.manage", params=PluginsManageParams, result=PluginsManageResult,
