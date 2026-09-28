@@ -3,6 +3,7 @@
 from pm import install_hint
 import asyncio
 import contextlib
+import html as _html
 import logging
 import os
 import re
@@ -22,6 +23,116 @@ _CAPTIONABLE_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | {".pdf", ".doc", ".docx", ".txt"
 # Native caption limits (chars): Telegram caps photo/video at 1024; one conservative shared ceiling elsewhere.
 _TELEGRAM_CAPTION_LIMIT = 1024
 _DEFAULT_CAPTION_LIMIT = 4096
+
+_TELEGRAM_CRON_ACTION_MARKER_RE = re.compile(
+    r"(?im)^\s*(?:<!--\s*telegram_actions\s*:\s*(?P<html_mode>[a-z0-9_-]+)\s*-->|\[\[telegram_actions:(?P<bracket_mode>[a-z0-9_-]+)\]\])\s*$"
+)
+_VISIBILITY_OPPORTUNITIES_SECTION_RE = re.compile(
+    r"(?im)^##\s+Draft-only opportunities\s*$"
+)
+_VISIBILITY_NEED_NICO_SECTION_RE = re.compile(r"(?im)^##\s+Need Nico\?\s*$")
+_VISIBILITY_NUMBERED_ITEM_RE = re.compile(r"(?m)^\s*(\d+)\.\s+")
+_VISIBILITY_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
+
+
+def _extract_telegram_cron_action_marker(text: str) -> tuple[str | None, str]:
+    """Strip a cron action marker before Telegram parse-mode detection."""
+    match = _TELEGRAM_CRON_ACTION_MARKER_RE.search(text or "")
+    if not match:
+        return None, text
+    mode = (match.group("html_mode") or match.group("bracket_mode") or "").strip().lower()
+    cleaned = _TELEGRAM_CRON_ACTION_MARKER_RE.sub("", text).strip()
+    return mode, cleaned
+
+
+def _telegram_cron_action_keyboard(mode: str | None):
+    """Build inline buttons for standalone Telegram cron delivery."""
+    if mode != "visibility":
+        return None
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    except Exception:
+        return None
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📝 Draft reply", callback_data="cr:draft"),
+            InlineKeyboardButton("🔎 Prioritize", callback_data="cr:prioritize"),
+        ],
+        [
+            InlineKeyboardButton("✅ Useful", callback_data="cr:useful"),
+            InlineKeyboardButton("✕ Dismiss", callback_data="cr:dismiss"),
+        ],
+    ])
+
+
+def _split_visibility_cron_report(text: str) -> list[str]:
+    """Split visibility report into summary + one message per opportunity."""
+    section = _VISIBILITY_OPPORTUNITIES_SECTION_RE.search(text or "")
+    if not section:
+        return []
+    before = text[:section.start()].strip()
+    after = text[section.end():].strip()
+    need_match = _VISIBILITY_NEED_NICO_SECTION_RE.search(after)
+    if need_match:
+        opportunities_text = after[:need_match.start()].strip()
+        need_text = after[need_match.start():].strip()
+    else:
+        opportunities_text = after
+        need_text = ""
+    item_matches = list(_VISIBILITY_NUMBERED_ITEM_RE.finditer(opportunities_text))
+    if len(item_matches) < 2:
+        return []
+    summary = before
+    if need_text:
+        summary = f"{summary}\n\n## Opportunities\n- Sent separately below, one message per opportunity.\n\n{need_text}"
+    else:
+        summary = f"{summary}\n\n## Opportunities\n- Sent separately below, one message per opportunity."
+    parts = [summary.strip()]
+    for idx, match in enumerate(item_matches):
+        start = match.start()
+        end = item_matches[idx + 1].start() if idx + 1 < len(item_matches) else len(opportunities_text)
+        item = opportunities_text[start:end].strip()
+        number = match.group(1)
+        parts.append(f"## Opportunity {number}\n\n{item}")
+    return [_plain_visibility_links(part) for part in parts if part.strip()]
+
+
+def _plain_visibility_links(text: str) -> str:
+    """Convert Markdown links to plain label: URL for Telegram reliability."""
+    return _VISIBILITY_MARKDOWN_LINK_RE.sub(r"\1: \2", text or "")
+
+
+def _visibility_html(text: str) -> str:
+    """Convert a small Markdown subset to Telegram HTML for cron cards."""
+    import html as _html
+
+    placeholders: dict[str, str] = {}
+
+    def _ph(value: str) -> str:
+        key = f"\x00TGHTML{len(placeholders)}\x00"
+        placeholders[key] = value
+        return key
+
+    text = text or ""
+    text = _VISIBILITY_MARKDOWN_LINK_RE.sub(
+        lambda m: _ph(
+            f'<a href="{_html.escape(m.group(2), quote=True)}">'
+            f'{_html.escape(m.group(1))}</a>'
+        ),
+        text,
+    )
+    text = _html.escape(text)
+    text = re.sub(
+        r"(?m)^##\s+(.+)$",
+        lambda m: f"<b>{m.group(1).strip()}</b>",
+        text,
+    )
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+    for key, value in placeholders.items():
+        text = text.replace(key, value)
+    return text
+
 
 
 def _media_caption_split(text, media_files, *, max_caption_len):
@@ -259,6 +370,10 @@ def _telegram_format(message):
 async def _send_telegram(token, chat_id, message, media_files=None, thread_id=None, disable_link_previews=False, force_document=False):
     """One-shot Telegram Bot API send; parse failures fall back to plain text."""
     try:
+        from telegram.constants import ParseMode
+        action_mode, message = _extract_telegram_cron_action_marker(message)
+        if action_mode == "visibility":
+            message = _plain_visibility_links(message)
         formatted, send_parse_mode, _has_html = _telegram_format(message)
         bot = _telegram_bot(token)
         from plugins.platforms.telegram.telegram_ids import normalize_telegram_chat_id
@@ -270,6 +385,23 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
         thread_kwargs = _telegram_thread_kwargs(thread_id)
         # disable_web_page_preview is only valid for send_message, not media sends.
         text_kwargs = {**thread_kwargs, **({"disable_web_page_preview": True} if disable_link_previews else {})}
+        if action_mode == "visibility":
+            split_parts = _split_visibility_cron_report(message)
+            visibility_parts = split_parts or [message]
+            sent_ids, last_msg = [], None
+            for idx, part in enumerate(visibility_parts):
+                part_kwargs = dict(text_kwargs)
+                if idx > 0 or len(visibility_parts) == 1:
+                    markup = _telegram_cron_action_keyboard("visibility")
+                    if markup is not None:
+                        part_kwargs["reply_markup"] = markup
+                last_msg = await _send_telegram_message_with_retry(
+                    bot, chat_id=int_chat_id, text=_visibility_html(part),
+                    parse_mode=ParseMode.HTML, **part_kwargs)
+                sent_ids.append(getattr(last_msg, "message_id", None))
+            return _success(
+                "telegram", chat_id, message_id=str(last_msg.message_id),
+                raw_response={"split_visibility_report": bool(split_parts), "message_ids": sent_ids, "parse_mode": "HTML"})
         last_msg, warnings, _tg_caption = None, [], None
         # MEDIA caption rides on the bubble as its *formatted* caption; formatting can inflate a
         # raw <1024 string past Telegram's cap, so re-check in UTF-16 units.

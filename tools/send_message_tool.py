@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 from functools import partial
 
 from agent.secret_scope import get_secret
@@ -23,129 +22,6 @@ from tools.registry import tool_error
 # NOTE: ``send_message`` is intentionally NOT registered as an agent-callable model tool
 # (the agent must not fire cross-platform messages on its own); cron delivery, the
 # ``hermes send`` CLI, the kanban notifier and the opt-in MCP server import the helpers.
-# Extensions that carry a native caption on the media bubble itself
-# (photo/video/document). Voice/audio notes are excluded: a caption on a
-# voice note reads as a separate label rather than a bubble caption, and the
-# established convention is to keep the accompanying text as its own message.
-_CAPTIONABLE_EXTS = _IMAGE_EXTS | _VIDEO_EXTS | {
-    ".pdf", ".doc", ".docx", ".txt", ".md", ".csv", ".xlsx", ".zip",
-}
-
-# Per-platform native caption length limits (characters). Text longer than
-# the limit can't ride on the media bubble and stays a separate body message.
-# Telegram's photo/video caption cap is 1024; WhatsApp and Discord are far
-# more generous, so a conservative shared ceiling keeps behavior predictable.
-_TELEGRAM_CAPTION_LIMIT = 1024
-_TELEGRAM_CRON_ACTION_MARKER_RE = re.compile(
-    r"(?im)^\s*(?:<!--\s*telegram_actions\s*:\s*(?P<html_mode>[a-z0-9_-]+)\s*-->|\[\[telegram_actions:(?P<bracket_mode>[a-z0-9_-]+)\]\])\s*$"
-)
-_VISIBILITY_OPPORTUNITIES_SECTION_RE = re.compile(
-    r"(?im)^##\s+Draft-only opportunities\s*$"
-)
-_VISIBILITY_NEED_NICO_SECTION_RE = re.compile(r"(?im)^##\s+Need Nico\?\s*$")
-_VISIBILITY_NUMBERED_ITEM_RE = re.compile(r"(?m)^\s*(\d+)\.\s+")
-_VISIBILITY_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)]+)\)")
-
-
-def _extract_telegram_cron_action_marker(text: str) -> tuple[str | None, str]:
-    """Strip a cron action marker before Telegram parse-mode detection."""
-    match = _TELEGRAM_CRON_ACTION_MARKER_RE.search(text or "")
-    if not match:
-        return None, text
-    mode = (match.group("html_mode") or match.group("bracket_mode") or "").strip().lower()
-    cleaned = _TELEGRAM_CRON_ACTION_MARKER_RE.sub("", text).strip()
-    return mode, cleaned
-
-
-def _telegram_cron_action_keyboard(mode: str | None):
-    """Build inline buttons for standalone Telegram cron delivery."""
-    if mode != "visibility":
-        return None
-    try:
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    except Exception:
-        return None
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📝 Draft reply", callback_data="cr:draft"),
-            InlineKeyboardButton("🔎 Prioritize", callback_data="cr:prioritize"),
-        ],
-        [
-            InlineKeyboardButton("✅ Useful", callback_data="cr:useful"),
-            InlineKeyboardButton("✕ Dismiss", callback_data="cr:dismiss"),
-        ],
-    ])
-
-
-def _split_visibility_cron_report(text: str) -> list[str]:
-    """Split visibility report into summary + one message per opportunity."""
-    section = _VISIBILITY_OPPORTUNITIES_SECTION_RE.search(text or "")
-    if not section:
-        return []
-    before = text[:section.start()].strip()
-    after = text[section.end():].strip()
-    need_match = _VISIBILITY_NEED_NICO_SECTION_RE.search(after)
-    if need_match:
-        opportunities_text = after[:need_match.start()].strip()
-        need_text = after[need_match.start():].strip()
-    else:
-        opportunities_text = after
-        need_text = ""
-    item_matches = list(_VISIBILITY_NUMBERED_ITEM_RE.finditer(opportunities_text))
-    if len(item_matches) < 2:
-        return []
-    summary = before
-    if need_text:
-        summary = f"{summary}\n\n## Opportunities\n- Sent separately below, one message per opportunity.\n\n{need_text}"
-    else:
-        summary = f"{summary}\n\n## Opportunities\n- Sent separately below, one message per opportunity."
-    parts = [summary.strip()]
-    for idx, match in enumerate(item_matches):
-        start = match.start()
-        end = item_matches[idx + 1].start() if idx + 1 < len(item_matches) else len(opportunities_text)
-        item = opportunities_text[start:end].strip()
-        number = match.group(1)
-        parts.append(f"## Opportunity {number}\n\n{item}")
-    return [_plain_visibility_links(part) for part in parts if part.strip()]
-
-
-def _plain_visibility_links(text: str) -> str:
-    """Convert Markdown links to plain label: URL for Telegram reliability."""
-    return _VISIBILITY_MARKDOWN_LINK_RE.sub(r"\1: \2", text or "")
-
-
-def _visibility_html(text: str) -> str:
-    """Convert a small Markdown subset to Telegram HTML for cron cards."""
-    import html as _html
-
-    placeholders: dict[str, str] = {}
-
-    def _ph(value: str) -> str:
-        key = f"\x00TGHTML{len(placeholders)}\x00"
-        placeholders[key] = value
-        return key
-
-    text = text or ""
-    text = _VISIBILITY_MARKDOWN_LINK_RE.sub(
-        lambda m: _ph(
-            f'<a href="{_html.escape(m.group(2), quote=True)}">'
-            f'{_html.escape(m.group(1))}</a>'
-        ),
-        text,
-    )
-    text = _html.escape(text)
-    text = re.sub(
-        r"(?m)^##\s+(.+)$",
-        lambda m: f"<b>{m.group(1).strip()}</b>",
-        text,
-    )
-    text = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", text)
-    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
-    for key, value in placeholders.items():
-        text = text.replace(key, value)
-    return text
-
-
 def prepare_send_message_platforms() -> None:
     """Load enabled standalone plugins before tool schemas/cache keys are built."""
     from hermes_cli.plugins import discover_plugins

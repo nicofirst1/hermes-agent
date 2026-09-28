@@ -452,6 +452,37 @@ class TestSendTelegramMediaDelivery:
         bot.send_photo.assert_awaited_once()
         assert bot.send_photo.await_args.kwargs.get("caption") == "Hello there"
 
+    def test_visibility_cron_cards_use_html_and_action_buttons(self, monkeypatch):
+        bot = MagicMock()
+        bot.send_message = AsyncMock(side_effect=[
+            SimpleNamespace(message_id=1), SimpleNamespace(message_id=2), SimpleNamespace(message_id=3),
+        ])
+        _install_telegram_mock(monkeypatch, bot)
+        monkeypatch.setattr(
+            "tools.send_message_senders._telegram_cron_action_keyboard",
+            lambda _mode: "visibility-buttons",
+        )
+
+        message = """## Summary
+
+## Draft-only opportunities
+1. **First** [source](https://example.com/one)
+2. **Second** [source](https://example.com/two)
+
+[[telegram_actions:visibility]]"""
+        result = asyncio.run(_send_telegram("token", "12345", message))
+
+        assert result["success"] is True
+        assert result["raw_response"]["split_visibility_report"] is True
+        assert result["raw_response"]["parse_mode"] == "HTML"
+        assert bot.send_message.await_count == 3
+        calls = bot.send_message.await_args_list
+        assert "telegram_actions" not in calls[0].kwargs["text"]
+        assert calls[0].kwargs["parse_mode"] == "HTML"
+        assert "reply_markup" not in calls[0].kwargs
+        assert calls[1].kwargs["reply_markup"] is not None
+        assert calls[2].kwargs["reply_markup"] is not None
+
     def test_sends_voice_for_ogg_with_voice_directive(self, tmp_path, monkeypatch):
         voice_path = tmp_path / "voice.ogg"
         voice_path.write_bytes(b"OggS" + b"\x00" * 32)
