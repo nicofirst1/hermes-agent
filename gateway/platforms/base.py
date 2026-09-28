@@ -156,10 +156,15 @@ def _reply_anchor_for_event(event) -> str | None:
         # SlackAdapter._resolve_thread_ts() treat it as a thread anchor and
         # reply in a (nonexistent) thread anyway.
         return None
+    if platform == "telegram" and getattr(event, "reply_to_message_id", None):
+        # Telegram reply anchors must be real numeric Bot API message ids.
+        # Callback-generated MessageEvent ids may be synthetic for dedupe, e.g.
+        # "649:cr:draft", and adapter.send() later casts reply_to to int.
+        return getattr(event, "reply_to_message_id", None)
     if platform == "telegram" and thread_id and getattr(source, "chat_type", None) == "dm":
         # Reply to the triggering user message. Replying to Telegram's earlier
         # topic seed/anchor can render the bot response outside the active lane.
-        return getattr(event, "message_id", None) or getattr(event, "reply_to_message_id", None)
+        return getattr(event, "message_id", None)
     if platform == "telegram" and thread_id:
         return None
     if platform == "feishu" and thread_id and getattr(event, "reply_to_message_id", None):

@@ -37,6 +37,29 @@ async def _cancel_heartbeat(adapter):
     adapter._polling_heartbeat_task = None
 
 
+def test_config_extra_can_disable_telegram_fallback_ips(monkeypatch):
+    adapter = TelegramAdapter(
+        PlatformConfig(
+            enabled=True,
+            token="***",
+            extra={"disable_fallback_ips": True, "fallback_ips": ["149.154.167.220"]},
+        )
+    )
+
+    monkeypatch.delenv("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS", raising=False)
+
+    assert adapter._fallback_ips() == ["149.154.167.220"]
+    assert adapter._telegram_fallback_ips_disabled() is True
+
+
+def test_env_can_disable_telegram_fallback_ips(monkeypatch):
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="***"))
+
+    monkeypatch.setenv("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS", "true")
+
+    assert adapter._telegram_fallback_ips_disabled() is True
+
+
 @pytest.mark.asyncio
 async def test_polling_conflict_retries_before_fatal(monkeypatch):
     """A single 409 should trigger a retry, not an immediate fatal error."""
@@ -111,6 +134,42 @@ async def test_polling_conflict_retries_before_fatal(monkeypatch):
     # asyncio.sleep mocked to instant above, it must not be left running or it
     # busy-spins on the event loop and starves the test. Cancel it explicitly.
     await _cancel_heartbeat(adapter)
+
+
+@pytest.mark.asyncio
+async def test_strict_cold_start_conflict_disarms_ptb_retry_loop(monkeypatch):
+    """Cold-start 409 must stop PTB's own retry loop before Hermes rebuilds.
+
+    During strict startup readiness, PTB reports polling errors through a
+    temporary callback before Hermes marks the adapter connected. A 409 Conflict
+    there means PTB's internal network_retry_loop is still alive. If Hermes
+    raises/rebuilds without synchronously disarming that loop, the old partial
+    app keeps polling and the replacement adapter self-conflicts forever.
+    """
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="***"))
+    disarm = MagicMock()
+    monkeypatch.setattr(adapter, "_disarm_ptb_retry_loop", disarm)
+
+    app = SimpleNamespace(updater=SimpleNamespace())
+    adapter._app = app
+    conflict = type("Conflict", (Exception,), {})
+
+    async def fake_start_polling_once(app_arg, *, error_callback, **_kwargs):
+        assert app_arg is app
+        generation, progress = adapter._begin_polling_generation()
+        error_callback(conflict("Conflict: terminated by other getUpdates request"))
+        return generation, progress
+
+    monkeypatch.setattr(adapter, "_start_polling_once", fake_start_polling_once)
+
+    with pytest.raises(OSError, match="errored before first getUpdates success"):
+        await adapter._start_polling_resilient(
+            drop_pending_updates=True,
+            error_callback=MagicMock(),
+            require_progress=True,
+        )
+
+    disarm.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -483,8 +542,11 @@ async def test_polling_conflict_reschedule_uses_running_loop(monkeypatch):
 
     conflict = type("Conflict", (Exception,), {})
 
-    # One conflict: count goes to 1 (< MAX), retry's start_polling raises,
-    # handler reschedules via loop.create_task — the previously-broken line.
+    # One pre-progress conflict: count goes to 1 (< MAX), retry's
+    # start_polling raises, handler reschedules via loop.create_task — the
+    # previously-broken line. Post-progress conflicts now hand off to the
+    # gateway-level adapter rebuild path instead.
+    adapter._send_path_degraded = True
     await adapter._handle_polling_conflict(
         conflict("Conflict: terminated by other getUpdates request")
     )

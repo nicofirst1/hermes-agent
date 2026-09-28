@@ -2128,6 +2128,12 @@ def _tui_need_npm_install(root: Path) -> bool:
     for name, pkg in wanted.items():
         if not name:
             continue
+        # Skip workspace-local packages (e.g. "", "ui-tui", "apps/desktop")
+        # — they are workspace definitions, not deps, and are never hoisted
+        # to node_modules/.  Only entries starting with "node_modules/"
+        # represent actual installed packages.
+        if not name.startswith("node_modules/"):
+            continue
 
         if not isinstance(pkg, dict):
             continue

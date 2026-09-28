@@ -4839,6 +4839,33 @@ class APIServerAdapter(BasePlatformAdapter):
                 self._set_run_status(run_id, "running", last_event="run.started")
                 await queue.put(_event_payload("message.started", {"message": {"id": message_id, "role": "assistant"}}))
                 history = await self._conversation_history_for_session(session_id)
+                # Approval notify callback — bridges sync agent thread
+                # → async SSE stream for session-chat clients. Mirrors
+                # the /v1/runs _approval_notify closure (line 7744).
+                _loop_ref = loop
+                _queue_ref = queue
+                def _approval_notify(approval_data: Dict[str, Any]) -> None:
+                    event = dict(approval_data or {})
+                    if "command" in event:
+                        from gateway.run import _redact_approval_command
+                        event["command"] = _redact_approval_command(event.get("command"))
+                    event.update({
+                        "event": "approval.request",
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                        "choices": _approval_event_choices(
+                            smart_denied=bool(event.get("smart_denied")),
+                            allow_session=event.get("allow_session") is not False,
+                            allow_permanent=event.get("allow_permanent") is not False,
+                        ),
+                    })
+                    self._set_run_status(run_id, "waiting_for_approval", last_event="approval.request")
+                    try:
+                        _loop_ref.call_soon_threadsafe(
+                            _queue_ref.put_nowait, ("approval.request", event)
+                        )
+                    except Exception:
+                        pass
                 result, usage = await self._run_agent(
                     user_message=user_message,
                     conversation_history=history,
@@ -4853,6 +4880,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     requested_runtime=runtime_request.get("requested") or {},
                     route_source=runtime_request.get("route_source") or "global",
                     confirmed_runtime_lock=lock_active,
+                    approval_notify_callback=_approval_notify,
                     **agent_overrides,
                 )
                 final_response = _resolve_media_to_data_urls(result.get("final_response", "") if isinstance(result, dict) else "")
@@ -7218,6 +7246,7 @@ class APIServerAdapter(BasePlatformAdapter):
         requested_runtime: Optional[Dict[str, Any]] = None,
         route_source: str = "global",
         confirmed_runtime_lock: bool = False,
+        approval_notify_callback=None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -7274,6 +7303,7 @@ class APIServerAdapter(BasePlatformAdapter):
                     ),
                 )
                 agent = None
+                _approval_session_key = None
                 try:
                     agent = self._create_agent(
                         ephemeral_system_prompt=ephemeral_system_prompt,
@@ -7308,6 +7338,17 @@ class APIServerAdapter(BasePlatformAdapter):
                     # ``agent_ref``, and only /v1/runs has a run_id, so neither
                     # is a usable hook for the rest.
                     self._shutdown_interruptible_agents[id(agent)] = agent
+                    # Register per-session approval notify callback so gated
+                    # tool calls enter Path A (block-agent / notify user)
+                    # instead of Path B (orphaned queue / silent timeout).
+                    # The callback bridges sync agent thread → async SSE
+                    # stream identically to the /v1/runs path.
+                    if approval_notify_callback is not None:
+                        from tools.approval import register_gateway_notify
+                        _approval_session_key = gateway_session_key or session_id or ""
+                        register_gateway_notify(
+                            _approval_session_key, approval_notify_callback
+                        )
                     result = agent.run_conversation(
                         user_message=user_message,
                         conversation_history=conversation_history,
@@ -7444,6 +7485,12 @@ class APIServerAdapter(BasePlatformAdapter):
                         # shutdown.  pop() is a no-op when _create_agent
                         # succeeded but the turn never reached registration.
                         self._shutdown_interruptible_agents.pop(id(agent), None)
+                    if _approval_session_key is not None:
+                        from tools.approval import unregister_gateway_notify
+                        try:
+                            unregister_gateway_notify(_approval_session_key)
+                        except Exception:
+                            pass
                     clear_session_vars(tokens)
 
         self._activate_admitted_request()

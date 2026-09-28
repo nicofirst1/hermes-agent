@@ -1833,11 +1833,24 @@ class TelegramAdapter(BasePlatformAdapter):
             return await send_fn(**retry_kwargs)
 
     def _fallback_ips(self) -> list[str]:
-        """Return validated fallback IPs from config (populated by _apply_env_overrides)."""
+        """Return validated fallback IPs from config or env overrides."""
         configured = self.config.extra.get("fallback_ips", []) if getattr(self.config, "extra", None) else []
         if isinstance(configured, str):
             configured = configured.split(",")
-        return parse_fallback_ip_env(",".join(str(v) for v in configured) if configured else None)
+        return parse_fallback_ip_env(",".join(str(v) for v in configured) if configured else None) or []
+
+    def _telegram_fallback_ips_disabled(self) -> bool:
+        """Whether Telegram fallback-IP transport is disabled.
+
+        `HERMES_TELEGRAM_DISABLE_FALLBACK_IPS` remains the operational escape
+        hatch. `platforms.telegram.extra.disable_fallback_ips` is the durable
+        config.yaml setting for non-secret behavior, matching Hermes config
+        conventions.
+        """
+        env_raw = os.getenv("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS", "")
+        if env_raw.strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+        return self._coerce_bool_extra("disable_fallback_ips", default=False)
 
     @staticmethod
     def _looks_like_polling_conflict(error: Exception) -> bool:
@@ -2913,6 +2926,13 @@ class TelegramAdapter(BasePlatformAdapter):
                     if error_callback is not None:
                         error_callback(error)
                     return
+                if self._looks_like_polling_conflict(error):
+                    # Cold-start conflicts still originate inside PTB's own
+                    # network_retry_loop. Disarm it synchronously before this
+                    # strict gate raises and the gateway rebuilds the adapter;
+                    # otherwise the abandoned partial app can keep polling and
+                    # self-conflict with the replacement generation.
+                    self._disarm_ptb_retry_loop()
                 if not strict_error:
                     strict_error.append(error)
                 # PTB invokes error callbacks from the polling task; the
@@ -4555,12 +4575,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     kwargs["limits"] = _pool_limits
                 return kwargs
 
-            disable_fallback = (
-                os.getenv("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS", "")
-                .strip()
-                .lower()
-                in {"1", "true", "yes", "on"}
-            )
+            disable_fallback = self._telegram_fallback_ips_disabled()
             fallback_ips = self._fallback_ips()
             if disable_fallback:
                 fallback_ips = []
