@@ -265,4 +265,3 @@ class TestWindowSpawnHelpers:
         monkeypatch.setattr(spawn_mod.shutil, "which", lambda name: "/usr/bin/herdr")
 
         assert spawn_mod.spawn_herdr_pane("20260922_120000_aaa", "/tmp") is False
-
