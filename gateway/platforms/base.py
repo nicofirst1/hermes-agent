@@ -166,12 +166,15 @@ def _reply_anchor_for_event(event) -> str | None:
         # Slack reaction handoff = new top-level message; a message_id anchor would make
         # _resolve_thread_ts() reply in a nonexistent thread.
         return None
+    if platform == "telegram" and getattr(event, "reply_to_message_id", None):
+        # Callback-generated events have synthetic message ids (for example
+        # ``649:cr:draft``); Telegram needs the numeric original anchor.
+        return getattr(event, "reply_to_message_id", None)
     if platform == "telegram" and thread_id:
-        # Forum topics route by topic metadata (no reply); DM-topic lanes reply to the triggering
-        # message — replying to the topic seed/anchor can render outside the active lane.
+        # Forum topics route by topic metadata (no reply); DM-topic lanes reply to the triggering message.
         if getattr(source, "chat_type", None) != "dm":
             return None
-        return getattr(event, "message_id", None) or getattr(event, "reply_to_message_id", None)
+        return getattr(event, "message_id", None)
     if platform == "feishu" and thread_id and getattr(event, "reply_to_message_id", None):
         return getattr(event, "reply_to_message_id", None)
     return getattr(event, "message_id", None)
