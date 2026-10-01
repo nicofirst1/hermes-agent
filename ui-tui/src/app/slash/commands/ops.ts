@@ -136,6 +136,7 @@ export const opsCommands: SlashCommand[] = [
       // Parse arg: `now` skips the confirmation gate (same grammar as /reload-mcp).
       const a = (arg || '').trim().toLowerCase()
       const params: { session_id: string | null; confirm?: boolean } = { session_id: ctx.sid }
+
       if (a === 'now' || a === 'approve' || a === 'once' || a === 'yes' || a === 'always') {
         params.confirm = true
       }
