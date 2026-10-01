@@ -90,6 +90,10 @@ def _tn(key: str, count: int, **kwargs) -> str:
     return _t(f"{key}_{'one' if count == 1 else 'other'}", count=count, **kwargs)
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'s' if n != 1 else ''}"
+
+
 def _gt(key: str, **kwargs) -> str:
     """A ``gateway.<key>`` catalog entry the CLI shares verbatim with the messaging gateway."""
     return t(f"gateway.{key}", **kwargs)

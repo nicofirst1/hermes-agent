@@ -305,6 +305,11 @@ gateway:
     none_connected: "연결된 MCP 서버가 없습니다."
     tools_available: "\n🔧 {servers}개 서버에서 {tools}개 도구 사용 가능"
     failed: "❌ MCP 재로드 실패: {error}"
+  reload_plugins:
+    cancelled: "🞡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup: "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt: "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed: "❌ Plugin reload failed: {error}"
   reload_skills:
     header: "🔄 **스킬이 재로드되었습니다**\n"
     no_new: "새로운 스킬이 감지되지 않았습니다."
@@ -2567,6 +2572,7 @@ cli:
     busy_skills: "스킬 명령 처리 중..."
     busy_browser: "브라우저 설정 중..."
     busy_reload_mcp: "MCP 서버 다시 불러오는 중..."
+    busy_reload_plugins: "플러그인 재로드 중..."
     busy_reload_skills: "스킬 다시 불러오는 중..."
     processing_command: "명령 처리 중..."
     thinking_label: "[생각 중]"

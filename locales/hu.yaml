@@ -308,6 +308,11 @@ gateway:
     none_connected: "Nincsenek csatlakoztatott MCP-szerverek."
     tools_available: "\n🔧 {tools} eszköz érhető el {servers} szerverről"
     failed: "❌ MCP újratöltés sikertelen: {error}"
+  reload_plugins:
+    cancelled: "🞡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup: "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt: "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed: "❌ Plugin reload failed: {error}"
   reload_skills:
     header: "🔄 **Készségek újratöltve**\n"
     no_new: "Nem észleltünk új készséget."
@@ -2584,6 +2589,7 @@ cli:
     busy_skills: "Skills parancs feldolgozása..."
     busy_browser: "Böngésző konfigurálása..."
     busy_reload_mcp: "MCP-szerverek újratöltése..."
+    busy_reload_plugins: "Bővítmények újratöltése..."
     busy_reload_skills: "Skillek újratöltése..."
     processing_command: "Parancs feldolgozása..."
     thinking_label: "[gondolkodik]"

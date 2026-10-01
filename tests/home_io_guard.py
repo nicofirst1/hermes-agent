@@ -30,6 +30,13 @@ _INTERPRETER_PREFIXES = tuple({
 # resolve once at import, as before: they are fixed for the process lifetime.
 _normcase = os.path.normcase
 _INTERPRETER_PREFIX_STRS = tuple(_normcase(os.fspath(p)) for p in _INTERPRETER_PREFIXES)
+# The sealed-payload adjacency probe (``pm.environments.payload_venv``) stats
+# ``<checkout>/../manifest.json``. In the default install the checkout sits INSIDE the Hermes
+# home, so the probe's metadata check lands in a guarded root. A stat of that one adjacent
+# path is not Hermes state (a payload manifest cannot exist beside a git checkout); reads and
+# writes stay guarded.
+_PAYLOAD_MANIFEST_PROBE = _normcase(
+    os.fspath(Path(__file__).resolve().parent.parent.parent / "manifest.json"))
 
 
 def _within(path: str, prefix: str) -> bool:
@@ -79,6 +86,8 @@ class HomeIOGuard:
             # link to compare inode identity); resolving it names whatever file that fd holds,
             # which is not I/O against the home.
             if metadata and (absolute == "/proc" or absolute.startswith("/proc" + os.sep)):
+                return
+            if metadata and absolute == _PAYLOAD_MANIFEST_PROBE:
                 return
             resolved = self._refuse_installed_app_change(value, absolute) if destructive else None
             roots = tuple(_normcase(os.fspath(r)) for r in self.roots())

@@ -305,6 +305,11 @@ gateway:
     none_connected: "Bağlı MCP sunucusu yok."
     tools_available: "\n🔧 {servers} sunucudan {tools} araç kullanılabilir"
     failed: "❌ MCP yeniden yükleme başarısız: {error}"
+  reload_plugins:
+    cancelled: "🞡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup: "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt: "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed: "❌ Plugin reload failed: {error}"
   reload_skills:
     header: "🔄 **Beceriler Yeniden Yüklendi**\n"
     no_new: "Yeni beceri tespit edilmedi."
@@ -2567,6 +2572,7 @@ cli:
     busy_skills: "Skill komutu işleniyor..."
     busy_browser: "Tarayıcı yapılandırılıyor..."
     busy_reload_mcp: "MCP sunucuları yeniden yükleniyor..."
+    busy_reload_plugins: "Eklentiler yeniden yükleniyor..."
     busy_reload_skills: "Skill'ler yeniden yükleniyor..."
     processing_command: "Komut işleniyor..."
     thinking_label: "[düşünme]"

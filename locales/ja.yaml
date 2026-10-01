@@ -305,6 +305,11 @@ gateway:
     none_connected: "接続中の MCP サーバーはありません。"
     tools_available: "\n🔧 {servers} 台のサーバーから {tools} 個のツールが利用可能"
     failed: "❌ MCP の再読み込みに失敗しました: {error}"
+  reload_plugins:
+    cancelled: "🞡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup: "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt: "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed: "❌ Plugin reload failed: {error}"
   reload_skills:
     header: "🔄 **スキルを再読み込みしました**\n"
     no_new: "新しいスキルは検出されませんでした。"
@@ -2567,6 +2572,7 @@ cli:
     busy_skills: "skills コマンドを処理中..."
     busy_browser: "ブラウザを設定中..."
     busy_reload_mcp: "MCP サーバーを再読み込み中..."
+    busy_reload_plugins: "プラグインを再読み込みしています..."
     busy_reload_skills: "スキルを再読み込み中..."
     processing_command: "コマンドを処理中..."
     thinking_label: "[思考中]"

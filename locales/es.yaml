@@ -305,6 +305,11 @@ gateway:
     none_connected: "No hay servidores MCP conectados."
     tools_available: "\n🔧 {tools} herramienta(s) disponibles de {servers} servidor(es)"
     failed: "❌ Falló la recarga de MCP: {error}"
+  reload_plugins:
+    cancelled: "🞡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup: "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt: "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed: "❌ Plugin reload failed: {error}"
   reload_skills:
     header: "🔄 **Skills recargadas**\n"
     no_new: "No se detectaron nuevas skills."
@@ -2567,6 +2572,7 @@ cli:
     busy_skills: "Procesando el comando de skills..."
     busy_browser: "Configurando el navegador..."
     busy_reload_mcp: "Recargando los servidores MCP..."
+    busy_reload_plugins: "Recargando plugins..."
     busy_reload_skills: "Recargando las skills..."
     processing_command: "Procesando el comando..."
     thinking_label: "[pensando]"

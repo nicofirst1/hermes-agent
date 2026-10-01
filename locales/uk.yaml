@@ -305,6 +305,11 @@ gateway:
     none_connected: "Немає підключених MCP-серверів."
     tools_available: "\n🔧 {tools} інструмент(ів) доступно з {servers} сервер(ів)"
     failed: "❌ Помилка перезавантаження MCP: {error}"
+  reload_plugins:
+    cancelled: "🞡 /reload-plugins cancelled. Plugins unchanged."
+    always_followup: "ℹ️ Future `/reload-plugins` calls will run without confirmation. Re-enable via `approvals.plugins_reload_confirm: true` in config.yaml."
+    confirm_prompt: "⚠️ **Confirm /reload-plugins**\n\nReloading plugins rebuilds the tool set for this session and **invalidates the provider prompt cache** — the next message will re-send full input tokens.  On long-context or high-reasoning models this can be expensive.\n\nChoose:\n• **Approve Once** — reload now\n• **Always Approve** — reload now and silence this prompt permanently\n• **Cancel** — leave plugins unchanged\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    failed: "❌ Plugin reload failed: {error}"
   reload_skills:
     header: "🔄 **Навички перезавантажено**\n"
     no_new: "Нових навичок не виявлено."
@@ -2567,6 +2572,7 @@ cli:
     busy_skills: "Обробка команди навичок..."
     busy_browser: "Налаштування браузера..."
     busy_reload_mcp: "Перезавантаження MCP-серверів..."
+    busy_reload_plugins: "Перезавантаження плагінів..."
     busy_reload_skills: "Перезавантаження навичок..."
     processing_command: "Обробка команди..."
     thinking_label: "[роздуми]"
